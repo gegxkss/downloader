@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +21,19 @@ type Downloader struct {
 	Concurrency int
 	TotalSize   int64
 	Downloaded  uint64
+}
+
+// verifyFile проверяет SHA256 хеш файла
+func verifyFile(path string, expectedHash string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256(data)
+	if hex.EncodeToString(hash[:]) != expectedHash {
+		return errors.New("checksum mismatch")
+	}
+	return nil
 }
 
 type DownloadPart struct {
@@ -42,7 +58,12 @@ func (pw *ProgressWriter) Write(p []byte) (n int, err error) {
 
 func (d *Downloader) Download() error {
 	// Get file size
-	resp, err := http.Head(d.URL)
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest("HEAD", d.URL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create HEAD request: %v", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to get file size: %v", err)
 	}
@@ -141,7 +162,7 @@ func (d *Downloader) downloadPart(part DownloadPart, partFile *os.File) error {
 	rangeHeader := fmt.Sprintf("bytes=%d-%d", part.Start, part.End)
 	req.Header.Set("Range", rangeHeader)
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
